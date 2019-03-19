@@ -108,7 +108,7 @@ def master_dark(file_list, master_bias_hdul, dtype=np.float32, saveto=None,
 
 
 def master_flat(file_list, master_bias_hdul, master_dark_hdul,
-                dtype=np.float32, saveto=None, overwrite=False):
+                dtype=np.float32, bit=16, saveto=None, overwrite=False):
     r"""
     Generate the master flat from a list of flat files,
     master bias and master dark files are necessary for computation.
@@ -124,6 +124,10 @@ def master_flat(file_list, master_bias_hdul, master_dark_hdul,
         Calculated master dark.
     dtype : data-type, optional
         Type to use for computing, defaults to np.float32.
+    bit : int, optional
+        Used to determine the maximum ADU value (2^bit - 1) of the initial
+        fits files, which gets overwritten when generating new files with a
+        different data type.
     saveto : str, optional
         If this is not set (None, default) files won't be saved.
         If this is set to a string, save the file with the string as name.
@@ -154,7 +158,7 @@ def master_flat(file_list, master_bias_hdul, master_dark_hdul,
     min_val = np.min(data)
     if min_val < 0:
         data -= min_val
-    data /= np.max(data)
+    data /= 2 ** bit - 1  # 65535 ADU for 16 bit
     hdu = fits.PrimaryHDU(data)
     hdul = fits.HDUList([hdu])
     hdul[0].header = header
@@ -239,13 +243,13 @@ def master_science(file_list, master_bias_hdul, master_dark_hdul,
                 if gain is None:
                     gain = header["EGAIN"]
                 total_exposure_time = exposure_time
-                data = gain * (hdul[0].data.astype(dtype) - master_bias -
-                               exposure_time * master_dark) / master_flat
+                data = (hdul[0].data.astype(dtype) - master_bias -
+                        exposure_time * master_dark) / master_flat
             else:
                 total_exposure_time += exposure_time
-                data += gain * (hdul[0].data.astype(dtype) - master_bias -
-                                exposure_time * master_dark) / master_flat
-    data /= total_exposure_time
+                data += (hdul[0].data.astype(dtype) - master_bias -
+                         exposure_time * master_dark) / master_flat
+    data *= gain / total_exposure_time
     data = normalize(data, method)
     hdu = fits.PrimaryHDU(data)
     hdul = fits.HDUList([hdu])
@@ -421,6 +425,10 @@ class Master:
         List of file names, glob may come in handy.
     dtype : data-type, optional
         Type to use for computing, defaults to np.float32.
+    bit : int, optional
+        Used to determine the maximum ADU value (2^bit - 1) of the initial
+        fits files, which gets overwritten when generating new files with a
+        different data type (see master_flat).
     gain : float, optional
         If not none, use this value for the gain instead of the one present
         in the fits table (see master_science).
@@ -450,8 +458,8 @@ class Master:
             file_name = f"science_frame_{filter_type}"
         return self.__save_dir + file_name + self.__extension
 
-    def __init__(self, file_list, dtype=np.float32, gain=None, method=None,
-                 save_dir=".", save_all=False, overwrite=False):
+    def __init__(self, file_list, dtype=np.float32, bit=16, gain=None,
+                 method=None, save_dir=".", save_all=False, overwrite=False):
         self.__dtype = dtype
         self.__save_all = save_all
         if save_dir[-1] != r"/":
@@ -508,6 +516,7 @@ class Master:
                 self.bias,
                 self.dark,
                 dtype,
+                bit,
                 self.__save("F", filter_type),
                 overwrite
             )
